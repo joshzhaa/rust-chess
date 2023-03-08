@@ -1,6 +1,6 @@
 use crate::piece::Piece;
 use std::fmt;
-use std::ops::{Add, AddAssign, Index, IndexMut};
+use std::ops::{Add, AddAssign, Index, IndexMut, Mul};
 
 #[derive(Clone)]
 pub struct Matrix<T>(pub Vec<Vec<T>>);
@@ -52,6 +52,14 @@ impl AddAssign<Vector> for Vector {
     fn add_assign(&mut self, rhs: Vector) {
         self.0 += rhs.0;
         self.1 += rhs.1;
+    }
+}
+
+impl Mul<i32> for Vector {
+    type Output = Vector;
+
+    fn mul(self, scalar: i32) -> Vector {
+        Vector(self.0 * scalar, self.1 * scalar)
     }
 }
 
