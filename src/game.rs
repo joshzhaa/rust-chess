@@ -3,25 +3,36 @@ use crate::piece::Piece;
 
 #[derive(Clone)]
 pub struct Game {
-    board: Board, //pieces on the board
+    board: Board,        //pieces on the board
     valid: Matrix<bool>, //boolean matrix of legal moves
     history: Vec<Game>,
-    players: u32, //number of players in game
-    turn: u32, //next player to move
+    players: Vec<Player>, //off by one, players[0] corresponds to player 1 (piece.owner 1)
+    turn: u32,            //next player to move
     halfmove_counter: u32,
     selection: Option<Vector>, // position of Piece selected to be moved
-    //decorative data
     recent_piece: Option<Piece>,
     recent_move: Option<Vector>, //target position of recent move
 }
 
+#[derive(Clone)]
+pub struct Player {
+    pub direction: Vector,
+}
+
 impl Game {
     pub fn new() -> Game {
-        Game{
+        Game {
             board: Board::standard(),
             valid: Matrix(vec![vec![false; 8]; 8]),
             history: Vec::new(),
-            players: 2,
+            players: vec![
+                Player {
+                    direction: Vector(0, 1),
+                },
+                Player {
+                    direction: Vector(0, -1),
+                },
+            ],
             turn: 1,
             halfmove_counter: 1,
             selection: None,
@@ -29,34 +40,40 @@ impl Game {
             recent_move: None,
         }
     }
-    // called from each piece to attack a position, determines whether it is legal
+    pub fn get_piece(&self, pos: &Vector) -> &Piece {
+        return &self.board[pos];
+    }
+    pub fn get_player(&self, player_id: u32) -> &Player {
+        return &self.players[player_id as usize - 1];
+    }
+    // called from each piece to attack a position, determines whether it is possible
     // returns true if piece is not blocked, false if piece is blocked
     // attacking an opposing piece marks it valid and returns false
     // attack an allied piece does not mark it valid and returns false
-    pub fn attack(&mut self, pos: Vector) -> bool {
+    pub fn attack(&mut self, pos: &Vector) -> bool {
         assert!(self.selection.is_some()); //this should only be called when game has a selection
-        if !self.board.in_bounds(&pos) { //guard against out of bounds
+        if !self.board.in_bounds(&pos) {
+            //guard against out of bounds
             return false;
         };
-        let is_occupied = self.board[&pos].id != ' ';
-        let is_opposed = self.board[&pos].owner != self.board[&self.selection.clone().unwrap()].owner;
-        // this could just return !is_opposed, wonder if match is more readable though
+        let is_occupied = self.board[pos].id != ' ';
+        let is_opposed =
+            self.board[pos].owner != self.board[&self.selection.clone().unwrap()].owner;
         match (is_occupied, is_opposed) {
             (false, _) => {
-                self.valid[&pos] = true;
+                self.valid[pos] = true;
                 true
-            },
+            }
             (true, true) => {
-                self.valid[&pos] = true;
-                false
-            },
-            (true, false) => {
+                self.valid[pos] = true;
                 false
             }
+            (true, false) => false,
         }
     }
     pub fn show_moves(&mut self, pos: Vector) {
-        self.board[&pos].validity_func()(&pos, self);
+        let selected = &self.board[&pos];
+        selected.validity_func()(&pos, self); // ask piece to mark the squares it wants
     }
     fn deselect(&mut self) {
         self.selection = None;
@@ -87,9 +104,8 @@ impl Game {
         let is_legal = self.valid[&pos];
         if correct_turn && is_legal {
             self.move_piece_unchecked(&self.selection.clone().unwrap(), &pos);
-        } else {
-            self.deselect();
         }
+        self.deselect();
     }
     // moves piece at 'from' to position at 'to' erases piece at 'to' if occupied
     // doesn't check legalitly
@@ -101,11 +117,15 @@ impl Game {
         self.recent_move = Some(to.clone());
         // modify board by swapping pieces around
         self.board[to] = self.board[from].clone();
-        self.board[from] = Piece{id: ' ', owner: 0, has_moved: false};
+        self.board[from] = Piece {
+            id: ' ',
+            owner: 0,
+            has_moved: false,
+        };
+        self.board[to].has_moved = true;
         // update turn counters
-        self.turn = self.turn % self.players + 1;
+        self.turn = self.turn % (self.players.len() as u32) + 1;
         self.halfmove_counter += 1;
-        self.deselect();
     }
     pub fn rewind(&mut self, halfmoves: u32) {
         let target_time = self.history.len() - halfmoves as usize;
@@ -113,23 +133,28 @@ impl Game {
         let target = self.history.pop().unwrap();
         *self = target;
         self.deselect();
-        // to accommodate unsigned integer
-        // self.turn = (self.turn + self.players - halfmoves - 1) % self.players + 1;
-        // self.halfmove_counter -= halfmoves;
     }
     // print board to terminal for debug purposes
     pub fn draw(&self) {
         let recent_piece = match &self.recent_piece {
             Some(piece) => piece,
-            None => &Piece{id: ' ', owner: 0, has_moved: false}
+            None => &Piece {
+                id: ' ',
+                owner: 0,
+                has_moved: false,
+            },
         };
         let recent_move = match &self.recent_move {
             Some(loc) => loc,
-            None => &Vector(0, 0)
+            None => &Vector(0, 0),
         };
         self.board.draw(&self.valid);
-        println!("most recent move: {}:{} to {}", recent_piece.id, recent_piece.owner,
-            recent_move.to_notation().unwrap());
+        println!(
+            "most recent move: {}:{} to {}",
+            recent_piece.id,
+            recent_piece.owner,
+            recent_move.to_notation().unwrap()
+        );
         println!("player to move: {}", self.turn);
         println!("halfmove counter: {}", self.halfmove_counter);
     }
