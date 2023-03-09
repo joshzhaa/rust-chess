@@ -3,41 +3,65 @@ use crate::piece::Piece;
 
 #[derive(Clone)]
 pub struct Game {
-    board: Board,        //pieces on the board
-    valid: Matrix<bool>, //boolean matrix of legal moves
+    pub board: Board,     // pieces on the board
+    valid: Matrix<bool>,  // boolean matrix of legal moves
+    threat: Matrix<bool>, // boolean matrix of threatened squares (subtly diff from valid b/c pawns)
     history: Vec<Game>,
-    players: Vec<Player>, //off by one, players[0] corresponds to player 1 (piece.owner 1)
-    turn: u32,            //next player to move
+    players: Vec<Player>, // off by one, players[0] corresponds to player 1 (piece.owner 1)
+    turn: u32,            // next player to move
     halfmove_counter: u32,
     selection: Option<Vector>, // position of Piece selected to be moved
-    recent_piece: Option<Piece>,
-    recent_move: Option<Vector>, //target position of recent move
+}
+
+// stores a move of some 'piece', from position 'start' to position 'end'
+#[derive(Clone, Debug)]
+pub struct Move {
+    piece: Piece,
+    pub start: Vector,
+    pub end: Vector,
+}
+
+impl Move {
+    // for identifying pawn double moves
+    pub fn square_dist(&self) -> i32 {
+        let displacement = self.start.clone() + self.end.clone() * -1;
+        displacement.0 * displacement.0 + displacement.1 * displacement.1
+    }
+    pub fn is_diag(&self) -> bool {
+        match self.end.clone() + self.start.clone() * -1 {
+            Vector(1 | -1, 1 | -1) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct Player {
     pub direction: Vector,
+    pub recent_move: Option<Move>, // each player tracks most recent move for en passant
 }
 
 impl Game {
+    // create standard chess game
     pub fn new() -> Game {
         Game {
             board: Board::standard(),
             valid: Matrix(vec![vec![false; 8]; 8]),
+            threat: Matrix(vec![vec![false; 8]; 8]),
             history: Vec::new(),
             players: vec![
                 Player {
                     direction: Vector(0, 1),
+                    recent_move: None,
                 },
                 Player {
                     direction: Vector(0, -1),
+                    recent_move: None,
                 },
             ],
             turn: 1,
             halfmove_counter: 1,
             selection: None,
-            recent_piece: None,
-            recent_move: None,
         }
     }
     pub fn get_piece(&self, pos: &Vector) -> &Piece {
@@ -46,11 +70,14 @@ impl Game {
     pub fn get_player(&self, player_id: u32) -> &Player {
         return &self.players[player_id as usize - 1];
     }
+    pub fn current_player(&self) -> &Player {
+        return &self.players[self.turn as usize - 1];
+    }
     // called from each piece to attack a position, determines whether it is possible
     // returns true if piece is not blocked, false if piece is blocked
     // attacking an opposing piece marks it valid and returns false
     // attack an allied piece does not mark it valid and returns false
-    pub fn attack(&mut self, pos: &Vector) -> bool {
+    pub fn attack(&mut self, pos: &Vector, threaten: bool) -> bool {
         assert!(self.selection.is_some()); //this should only be called when game has a selection
         if !self.board.in_bounds(&pos) {
             //guard against out of bounds
@@ -62,10 +89,16 @@ impl Game {
         match (is_occupied, is_opposed) {
             (false, _) => {
                 self.valid[pos] = true;
+                if threaten {
+                    self.threat[pos] = true;
+                }
                 true
             }
             (true, true) => {
                 self.valid[pos] = true;
+                if threaten {
+                    self.threat[pos] = true;
+                }
                 false
             }
             (true, false) => false,
@@ -113,8 +146,13 @@ impl Game {
         assert_ne!(self.board[from].id, ' ');
         // record current state in history
         self.history.push(self.clone());
-        self.recent_piece = Some(self.board[from].clone());
-        self.recent_move = Some(to.clone());
+        self.players[self.turn as usize - 1].recent_move = Some(Move {
+            piece: self.board[from].clone(),
+            start: from.clone(),
+            end: to.clone(),
+        });
+        // perform move side effects (e.g. K castle and P en passant)
+        self.board[from].side_effects()(self);
         // modify board by swapping pieces around
         self.board[to] = self.board[from].clone();
         self.board[from] = Piece {
@@ -136,25 +174,19 @@ impl Game {
     }
     // print board to terminal for debug purposes
     pub fn draw(&self) {
-        let recent_piece = match &self.recent_piece {
-            Some(piece) => piece,
-            None => &Piece {
-                id: ' ',
-                owner: 0,
-                has_moved: false,
-            },
-        };
-        let recent_move = match &self.recent_move {
-            Some(loc) => loc,
-            None => &Vector(0, 0),
-        };
         self.board.draw(&self.valid);
-        println!(
-            "most recent move: {}:{} to {}",
-            recent_piece.id,
-            recent_piece.owner,
-            recent_move.to_notation().unwrap()
-        );
+        let prev_player =
+            &self.players[(self.turn as usize - 1 + self.players.len() - 1) % self.players.len()];
+        match &prev_player.recent_move {
+            Some(recent_move) => println!(
+                "move: {}:{} from {} to {}",
+                recent_move.piece.id,
+                recent_move.piece.owner,
+                recent_move.start.to_notation().unwrap(),
+                recent_move.end.to_notation().unwrap(),
+            ),
+            None => (),
+        };
         println!("player to move: {}", self.turn);
         println!("halfmove counter: {}", self.halfmove_counter);
     }

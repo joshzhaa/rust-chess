@@ -1,5 +1,5 @@
-mod game;
 mod board;
+mod game;
 mod piece;
 
 use std::io::{self, BufRead};
