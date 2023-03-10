@@ -3,9 +3,9 @@ use crate::piece::Piece;
 
 #[derive(Clone)]
 pub struct Game {
-    pub board: Board,     // pieces on the board
-    valid: Matrix<bool>,  // boolean matrix of legal moves
-    threat: Matrix<bool>, // boolean matrix of threatened squares (subtly diff from valid b/c pawns)
+    pub board: Board,         // pieces on the board
+    pub valid: Matrix<bool>,  // boolean matrix of legal moves
+    pub threat: Matrix<bool>, // boolean matrix of threatened squares (subtly diff from valid b/c pawns)
     history: Vec<Game>,
     players: Vec<Player>, // off by one, players[0] corresponds to player 1 (piece.owner 1)
     turn: u32,            // next player to move
@@ -96,9 +96,6 @@ impl Game {
             }
             (true, true) => {
                 self.valid[pos] = true;
-                if threaten {
-                    self.threat[pos] = true;
-                }
                 false
             }
             (true, false) => false,

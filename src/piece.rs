@@ -1,4 +1,4 @@
-use crate::board::Vector;
+use crate::board::{Matrix, Vector};
 use crate::game::Game;
 
 // each piece keeps track of what kind it is (K, Q, R, ...) and which player controls it (1, 2, 3, ...)
@@ -23,10 +23,46 @@ impl Piece {
     pub fn validity_func(&self) -> impl FnMut(&Vector, &mut Game) {
         match self.id {
             'K' => |pos: &Vector, game: &mut Game| {
+                // check whether a square is threatened by other players
+                let mut threatened = Matrix(vec![
+                    vec![false; game.threat.0[0].len()];
+                    game.threat.0.len()
+                ]);
+                let mut or_assign = |other: &Matrix<bool>| {
+                    for row in 0..other.0.len() as i32 {
+                        for col in 0..other.0[0].len() as i32 {
+                            let pos = Vector(col, row);
+                            threatened[&pos] = threatened[&pos] || other[&pos];
+                        }
+                    }
+                    println!("{}", threatened);
+                };
+                for row in 0..game.board.0 .0.len() as i32 {
+                    for col in 0..game.board.0 .0[0].len() as i32 {
+                        let attacker = &game.board[&Vector(col, row)];
+                        let attacked = &game.board[pos];
+                        println!("investigate pos ({col}, {row}) with piece {attacker:?} to {attacked:?}");
+                        if attacker.owner != attacked.owner && attacker.id != 'K' {
+                            game.show_moves(Vector(col, row));
+                            or_assign(&game.threat);
+                        }
+                    }
+                }
+                // clear valid and threat matrices
+                for row in 0..game.board.0 .0.len() as i32 {
+                    for col in 0..game.board.0 .0[0].len() as i32 {
+                        game.valid[&Vector(col, row)] = false;
+                        game.threat[&Vector(col, row)] = false;
+                    }
+                }
+                println!("{}", threatened);
                 for i in -1..=1 {
                     for j in -1..=1 {
                         if i != 0 || j != 0 {
-                            game.attack(&(pos.clone() + Vector(i, j)), true);
+                            let target = pos.clone() + Vector(i, j);
+                            if game.board.in_bounds(&target) && !threatened[&target] {
+                                game.attack(&target, true);
+                            }
                         }
                     }
                 }
@@ -85,6 +121,9 @@ impl Piece {
                 let diag_right = pos.clone() + unit_vec.clone() + right.clone();
                 let diag_left = pos.clone() + unit_vec.clone() + left.clone();
                 let can_diagonal = |pos: Vector| {
+                    if !game.board.in_bounds(&pos) {
+                        return false;
+                    };
                     let diag_piece = game.get_piece(&pos);
                     diag_piece.id != ' ' && diag_piece.is_opposed(&piece)
                 };
@@ -92,7 +131,11 @@ impl Piece {
                 let can_left = can_diagonal(diag_left.clone());
                 // en passant logic
                 let can_passant = |pos: Vector| {
+                    if !game.board.in_bounds(&pos) {
+                        return false;
+                    }
                     let passant_piece = game.get_piece(&pos);
+                    // if guard b/c get_player will cause underflow
                     if passant_piece.id == ' ' {
                         return false;
                     }
@@ -104,9 +147,17 @@ impl Piece {
                     passant_piece.id == 'P'
                         && passant_piece.is_opposed(&piece)
                         && recent_move.square_dist() == 4
+                        && recent_move.end == pos
                 };
                 let right_passant = can_passant(pos.clone() + right.clone());
                 let left_passant = can_passant(pos.clone() + left.clone());
+                // need to always threaten diag squares to communicate that enemy K cannot move there
+                if game.board.in_bounds(&diag_right) {
+                    game.threat[&diag_right] = true;
+                }
+                if game.board.in_bounds(&diag_left) {
+                    game.threat[&diag_left] = true;
+                }
                 // carry out attacks, needs local variables logic *then* attack due to mut borrow rules
                 if can_right || right_passant {
                     game.attack(&diag_right, true);

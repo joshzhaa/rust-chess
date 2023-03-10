@@ -2,14 +2,14 @@ use crate::piece::Piece;
 use std::fmt;
 use std::ops::{Add, AddAssign, Index, IndexMut, Mul};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Matrix<T>(pub Vec<Vec<T>>);
 
 #[derive(Clone)]
-pub struct Board(Matrix<Piece>);
+pub struct Board(pub Matrix<Piece>);
 
 // for indexing into Board as an (x, y) ordered pair
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Vector(pub i32, pub i32);
 
 impl Index<&Vector> for Board {
@@ -37,6 +37,20 @@ impl<T> Index<&Vector> for Matrix<T> {
 impl<T> IndexMut<&Vector> for Matrix<T> {
     fn index_mut(&mut self, pos: &Vector) -> &mut Self::Output {
         &mut self.0[pos.1 as usize][pos.0 as usize]
+    }
+}
+
+impl fmt::Display for Matrix<bool> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for row in self.0.iter().rev() {
+            write!(f, "| ")?;
+            for col in row.iter() {
+                let print = if *col { '1' } else { '0' };
+                write!(f, "{print} ")?;
+            }
+            write!(f, "|\n")?;
+        }
+        write!(f, "")
     }
 }
 
