@@ -90,6 +90,7 @@ impl Game {
             (false, _) => {
                 self.valid[pos] = true;
                 if threaten {
+                    // TODO: BUG relating to attack requiring state, self.selection
                     self.threat[pos] = true;
                 }
                 true
