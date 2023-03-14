@@ -66,8 +66,8 @@ impl Piece {
                 };
                 for row in 0..game.state.board.0 .0.len() as i32 {
                     for col in 0..game.state.board.0 .0[0].len() as i32 {
-                        let attacker = &game.state.board[&Vector(col, row)];
-                        let attacked = &game.state.board[pos];
+                        let attacker = game.get_piece(&Vector(col, row));
+                        let attacked = game.get_piece(pos);
                         println!("investigate pos ({col}, {row}) with piece {attacker:?} to {attacked:?}");
                         if attacker.owner != attacked.owner {
                             or_assign(&Vector(col, row));
@@ -75,11 +75,47 @@ impl Piece {
                     }
                 }
                 println!("{}", threatened);
+                // mark standard moves
                 for offset in offsets {
                     let target = pos.clone() + offset;
                     if game.state.board.in_bounds(&target) && !threatened[&target] {
                         this.attack(target, &game.state, &mut valid, Some(&mut threat));
                     }
+                }
+                // mark castles
+                let unit_vec = game.get_player(this.owner).direction.clone();
+                let can_castle = |direction: &Vector| {
+                    // def of castle here
+                    if game.in_bounds(&(pos.clone() + unit_vec.clone() * -1)) || this.has_moved {
+                        return false;
+                    }
+                    let friendly_rook =
+                        |piece: &Piece| piece.id == 'R' && piece.owner == this.owner;
+                    let mut target = pos.clone();
+                    loop {
+                        let piece = game.get_piece(&target);
+                        if threatened[&target] {
+                            return false;
+                        } else if friendly_rook(piece) {
+                            return !piece.has_moved;
+                        } else if piece.id != ' ' && target != *pos {
+                            return false;
+                        }
+                        target += direction.clone();
+                        if !game.in_bounds(&target) {
+                            return false;
+                        }
+                    }
+                };
+                let right = Vector(-1 * unit_vec.1, unit_vec.0);
+                let left = right.clone() * -1;
+                if can_castle(&right) {
+                    let target = pos.clone() + right * 2;
+                    this.attack(target, &game.state, &mut valid, Some(&mut threat));
+                }
+                if can_castle(&left) {
+                    let target = pos.clone() + left * 2;
+                    this.attack(target, &game.state, &mut valid, Some(&mut threat));
                 }
                 (valid, threat)
             },
@@ -209,7 +245,6 @@ impl Piece {
                 }
                 (valid, threat)
             },
-            // branch should never occur
             _ => move |_pos: &Vector, game: &Game| {
                 let (valid, threat) = init_masks(&game.state);
                 (valid, threat)
@@ -220,6 +255,31 @@ impl Piece {
     // before pieces are swapped, after player's recent_move field has been updated
     pub fn side_effects(&self) -> impl FnMut(&mut Game) {
         match self.id {
+            // swap R position
+            'K' => |game: &mut Game| {
+                let player = game.current_player();
+                let recent_move = player.recent_move.clone().unwrap();
+                let start = recent_move.start.clone();
+                let end = recent_move.end.clone();
+                let displacement = end + start.clone() * -1;
+                let is_castle = match displacement {
+                    Vector(2, 0) | Vector(-2, 0) | Vector(0, 2) | Vector(0, -2) => true,
+                    _ => false,
+                };
+                let direction = Vector(displacement.0 / 2, displacement.1 / 2);
+                let find_rook = || {
+                    let mut target = start.clone();
+                    while game.get_piece(&target).id != 'R' {
+                        target += direction.clone();
+                    }
+                    target
+                };
+                if is_castle {
+                    let rook_pos = find_rook();
+                    game.state.board[&(start + direction)] = game.state.board[&rook_pos].clone();
+                    game.state.board[&rook_pos] = Piece::new();
+                }
+            },
             // destroy en passant'ed pawn
             'P' => |game: &mut Game| {
                 let player = game.current_player();

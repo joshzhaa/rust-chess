@@ -72,10 +72,13 @@ impl Game {
         }
     }
     pub fn get_piece(&self, pos: &Vector) -> &Piece {
-        return &self.state.board[pos];
+        &self.state.board[pos]
     }
     pub fn get_player(&self, player_id: usize) -> &Player {
-        return &self.state.players[player_id as usize - 1];
+        &self.state.players[player_id as usize - 1]
+    }
+    pub fn in_bounds(&self, pos: &Vector) -> bool {
+        self.state.board.in_bounds(pos)
     }
     pub fn current_player(&self) -> &Player {
         return &self.state.players[self.state.turn as usize - 1];
