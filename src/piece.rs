@@ -1,12 +1,20 @@
 use crate::board::{Matrix, Vector};
-use crate::game::Game;
+use crate::game::{Game, GameState};
 
 // each piece keeps track of what kind it is (K, Q, R, ...) and which player controls it (1, 2, 3, ...)
 #[derive(Clone, PartialEq, Debug)]
 pub struct Piece {
     pub id: char,
-    pub owner: u32,
+    pub owner: usize, // indexes into a vector of players
     pub has_moved: bool,
+}
+
+fn init_masks(game: &GameState) -> (Matrix<bool>, Matrix<bool>) {
+    let (rows, cols) = game.board.shape();
+    (
+        Matrix::new(false, rows, cols),
+        Matrix::new(false, rows, cols),
+    )
 }
 
 impl Piece {
@@ -17,78 +25,102 @@ impl Piece {
             has_moved: false,
         }
     }
-    fn is_opposed(&self, other: &Piece) -> bool {
-        self.owner != other.owner
-    }
-    pub fn validity_func(&self) -> impl FnMut(&Vector, &mut Game) {
+
+    pub fn validity_func(&self) -> impl FnOnce(&Vector, &Game) -> (Matrix<bool>, Matrix<bool>) {
         match self.id {
-            'K' => |pos: &Vector, game: &mut Game| {
+            'K' => move |pos: &Vector, game: &Game| -> (Matrix<bool>, Matrix<bool>) {
+                let this = game.get_piece(pos);
+                let (mut valid, mut threat) = init_masks(&game.state);
+                let offsets = vec![
+                    Vector(-1, -1),
+                    Vector(-1, 0),
+                    Vector(-1, 1),
+                    Vector(0, -1),
+                    Vector(0, 1),
+                    Vector(1, -1),
+                    Vector(1, 0),
+                    Vector(1, 1),
+                ];
                 // check whether a square is threatened by other players
-                let mut threatened = Matrix(vec![
-                    vec![false; game.threat.0[0].len()];
-                    game.threat.0.len()
-                ]);
-                let mut or_assign = |other: &Matrix<bool>| {
-                    for row in 0..other.0.len() as i32 {
-                        for col in 0..other.0[0].len() as i32 {
+                let mut threatened = threat.clone(); // accumulated threat matrix of all pieces
+                let mut or_assign = |pos: &Vector| {
+                    // to prevent infinite recursion
+                    if game.get_piece(pos).id == 'K' {
+                        for offset in &offsets {
+                            let target = pos.clone() + offset.clone();
+                            if game.state.board.in_bounds(&target) {
+                                threatened[&target] = true;
+                            }
+                        }
+                        return;
+                    }
+                    // handle non-king pieces
+                    let (_, threat) = game.state.board[pos].validity_func()(pos, game);
+                    for row in 0..threat.0.len() as i32 {
+                        for col in 0..threat.0[0].len() as i32 {
                             let pos = Vector(col, row);
-                            threatened[&pos] = threatened[&pos] || other[&pos];
+                            threatened[&pos] = threatened[&pos] || threat[&pos];
                         }
                     }
                     println!("{}", threatened);
                 };
-                for row in 0..game.board.0 .0.len() as i32 {
-                    for col in 0..game.board.0 .0[0].len() as i32 {
-                        let attacker = &game.board[&Vector(col, row)];
-                        let attacked = &game.board[pos];
+                for row in 0..game.state.board.0 .0.len() as i32 {
+                    for col in 0..game.state.board.0 .0[0].len() as i32 {
+                        let attacker = &game.state.board[&Vector(col, row)];
+                        let attacked = &game.state.board[pos];
                         println!("investigate pos ({col}, {row}) with piece {attacker:?} to {attacked:?}");
-                        if attacker.owner != attacked.owner && attacker.id != 'K' {
-                            game.show_moves(Vector(col, row));
-                            or_assign(&game.threat);
+                        if attacker.owner != attacked.owner {
+                            or_assign(&Vector(col, row));
                         }
-                    }
-                }
-                // clear valid and threat matrices
-                for row in 0..game.board.0 .0.len() as i32 {
-                    for col in 0..game.board.0 .0[0].len() as i32 {
-                        game.valid[&Vector(col, row)] = false;
-                        game.threat[&Vector(col, row)] = false;
                     }
                 }
                 println!("{}", threatened);
-                for i in -1..=1 {
-                    for j in -1..=1 {
-                        if i != 0 || j != 0 {
-                            let target = pos.clone() + Vector(i, j);
-                            if game.board.in_bounds(&target) && !threatened[&target] {
-                                game.attack(&target, true);
-                            }
-                        }
+                for offset in offsets {
+                    let target = pos.clone() + offset;
+                    if game.state.board.in_bounds(&target) && !threatened[&target] {
+                        this.attack(target, &game.state, &mut valid, Some(&mut threat));
                     }
                 }
+                (valid, threat)
             },
-            'Q' => |pos: &Vector, game: &mut Game| {
-                for i in -1..=1 {
-                    for j in -1..=1 {
-                        if i != 0 || j != 0 {
-                            extend(pos, Vector(i, j), game);
-                        }
-                    }
-                }
+            'Q' => move |pos: &Vector, game: &Game| -> (Matrix<bool>, Matrix<bool>) {
+                let this = game.get_piece(pos);
+                let (mut valid, mut threat) = init_masks(&game.state);
+                let directions = vec![
+                    Vector(-1, -1),
+                    Vector(-1, 0),
+                    Vector(-1, 1),
+                    Vector(0, -1),
+                    Vector(0, 1),
+                    Vector(1, -1),
+                    Vector(1, 0),
+                    Vector(1, 1),
+                ];
+                this.extend(pos, directions, &game.state, &mut valid, &mut threat);
+                (valid, threat)
             },
-            'R' => |pos: &Vector, game: &mut Game| {
-                extend(pos, Vector(0, 1), game); // North
-                extend(pos, Vector(1, 0), game); // East
-                extend(pos, Vector(0, -1), game); // South
-                extend(pos, Vector(-1, 0), game); // West
+            'R' => move |pos: &Vector, game: &Game| {
+                let this = game.get_piece(pos);
+                let (mut valid, mut threat) = init_masks(&game.state);
+                let directions = vec![Vector(0, 1), Vector(1, 0), Vector(0, -1), Vector(-1, 0)];
+                this.extend(pos, directions, &game.state, &mut valid, &mut threat);
+                (valid, threat)
             },
-            'B' => |pos: &Vector, game: &mut Game| {
-                extend(pos, Vector(1, 1), game); // NE
-                extend(pos, Vector(1, -1), game); // SE
-                extend(pos, Vector(-1, -1), game); // SW
-                extend(pos, Vector(-1, 1), game); // NW
+            'B' => move |pos: &Vector, game: &Game| {
+                let this = game.get_piece(pos);
+                let (mut valid, mut threat) = init_masks(&game.state);
+                let directions = vec![
+                    Vector(1, 1),   // NE
+                    Vector(1, -1),  // SE
+                    Vector(-1, -1), // SW
+                    Vector(-1, 1),  // NW
+                ];
+                this.extend(pos, directions, &game.state, &mut valid, &mut threat);
+                (valid, threat)
             },
-            'N' => |pos: &Vector, game: &mut Game| {
+            'N' => |pos: &Vector, game: &Game| {
+                let this = game.get_piece(pos);
+                let (mut valid, mut threat) = init_masks(&game.state);
                 //counterclockwise from positive x-axis
                 let offsets = [
                     Vector(2, 1),
@@ -101,13 +133,15 @@ impl Piece {
                     Vector(2, -1),
                 ];
                 for offset in offsets {
-                    game.attack(&(pos.clone() + offset), true);
+                    let target = pos.clone() + offset;
+                    this.attack(target, &game.state, &mut valid, Some(&mut threat));
                 }
+                (valid, threat)
             },
             // pawn logic is fundamentally horrific
-            'P' => |pos: &Vector, game: &mut Game| {
-                // most pieces don't capture self, capturing self would change closure signature,
-                // not sure if there is a better workaround in the language
+            'P' => move |pos: &Vector, game: &Game| {
+                let this = game.get_piece(pos);
+                let (mut valid, mut threat) = init_masks(&game.state);
                 let piece = game.get_piece(pos);
                 let unit_vec = game.get_player(piece.owner).direction.clone();
                 // initial double move logic
@@ -121,17 +155,17 @@ impl Piece {
                 let diag_right = pos.clone() + unit_vec.clone() + right.clone();
                 let diag_left = pos.clone() + unit_vec.clone() + left.clone();
                 let can_diagonal = |pos: Vector| {
-                    if !game.board.in_bounds(&pos) {
+                    if !game.state.board.in_bounds(&pos) {
                         return false;
                     };
                     let diag_piece = game.get_piece(&pos);
-                    diag_piece.id != ' ' && diag_piece.is_opposed(&piece)
+                    diag_piece.id != ' ' && diag_piece.owner != piece.owner
                 };
                 let can_right = can_diagonal(diag_right.clone());
                 let can_left = can_diagonal(diag_left.clone());
                 // en passant logic
                 let can_passant = |pos: Vector| {
-                    if !game.board.in_bounds(&pos) {
+                    if !game.state.board.in_bounds(&pos) {
                         return false;
                     }
                     let passant_piece = game.get_piece(&pos);
@@ -145,35 +179,41 @@ impl Piece {
                     }
                     let recent_move = passant_victim.recent_move.clone().unwrap();
                     passant_piece.id == 'P'
-                        && passant_piece.is_opposed(&piece)
+                        && passant_piece.owner != piece.owner
                         && recent_move.square_dist() == 4
                         && recent_move.end == pos
                 };
                 let right_passant = can_passant(pos.clone() + right.clone());
                 let left_passant = can_passant(pos.clone() + left.clone());
                 // need to always threaten diag squares to communicate that enemy K cannot move there
-                if game.board.in_bounds(&diag_right) {
-                    game.threat[&diag_right] = true;
+                if game.state.board.in_bounds(&diag_right) {
+                    threat[&diag_right] = true;
                 }
-                if game.board.in_bounds(&diag_left) {
-                    game.threat[&diag_left] = true;
+                if game.state.board.in_bounds(&diag_left) {
+                    threat[&diag_left] = true;
                 }
                 // carry out attacks, needs local variables logic *then* attack due to mut borrow rules
                 if can_right || right_passant {
-                    game.attack(&diag_right, true);
+                    this.attack(diag_right, &game.state, &mut valid, Some(&mut threat));
                 }
                 if can_left || left_passant {
-                    game.attack(&diag_left, true);
+                    this.attack(diag_left, &game.state, &mut valid, Some(&mut threat));
                 }
                 if near_is_empty {
-                    game.attack(&(pos.clone() + unit_vec.clone()), false);
+                    let near = pos.clone() + unit_vec.clone();
+                    this.attack(near, &game.state, &mut valid, None);
                     if !has_moved && far_is_empty {
-                        game.attack(&(pos.clone() + unit_vec * 2), false);
+                        let far = pos.clone() + unit_vec.clone() * 2;
+                        this.attack(far, &game.state, &mut valid, None);
                     }
                 }
+                (valid, threat)
             },
             // branch should never occur
-            _ => |_pos: &Vector, _game: &mut Game| {},
+            _ => move |_pos: &Vector, game: &Game| {
+                let (valid, threat) = init_masks(&game.state);
+                (valid, threat)
+            },
         }
     }
     // functions must be called as move is being made,
@@ -189,21 +229,68 @@ impl Piece {
                 let is_capture = game.get_piece(&end_pos).id != ' ';
                 if !is_capture && recent_move.is_diag() {
                     let unit_vec = player.direction.clone();
-                    game.board[&(end_pos + unit_vec * -1)] = Self::new();
+                    game.state.board[&(end_pos + unit_vec * -1)] = Self::new();
                 }
             },
             _ => |_game: &mut Game| {},
         }
     }
-}
-
-// sequentially attack in a direction, common to Q R and B
-fn extend(pos: &Vector, direction: Vector, game: &mut Game) {
-    let mut target = pos.clone();
-    loop {
-        target += direction.clone();
-        if !game.attack(&target, true) {
-            break;
+    // called from each piece to attack a position, determines whether it is possible
+    // returns true if piece is not blocked, false if piece is blocked
+    // attacking an opposing piece marks it valid and returns false
+    // attack an allied piece does not mark it valid and returns false
+    pub fn attack(
+        &self,
+        pos: Vector,
+        state: &GameState,
+        valid: &mut Matrix<bool>,
+        threat: Option<&mut Matrix<bool>>,
+    ) -> bool {
+        if !state.board.in_bounds(&pos) {
+            //guard against out of bounds
+            return false;
+        };
+        let is_occupied = state.board[&pos].id != ' ';
+        let is_opposed = state.board[&pos].owner != self.owner;
+        match (is_occupied, is_opposed) {
+            (false, _) => {
+                valid[&pos] = true;
+                if threat.is_some() {
+                    threat.unwrap()[&pos] = true;
+                }
+                true
+            }
+            (true, true) => {
+                valid[&pos] = true;
+                if threat.is_some() {
+                    threat.unwrap()[&pos] = true;
+                }
+                false
+            }
+            (true, false) => {
+                if threat.is_some() {
+                    threat.unwrap()[&pos] = true;
+                }
+                false
+            }
+        }
+    } // sequentially attack in a direction, common to Q R and B
+    fn extend(
+        &self,
+        pos: &Vector,
+        directions: Vec<Vector>,
+        state: &GameState,
+        valid: &mut Matrix<bool>,
+        threat: &mut Matrix<bool>,
+    ) {
+        for direction in directions {
+            let mut target = pos.clone();
+            loop {
+                target += direction.clone();
+                if !self.attack(target.clone(), state, valid, Some(threat)) {
+                    break;
+                }
+            }
         }
     }
 }

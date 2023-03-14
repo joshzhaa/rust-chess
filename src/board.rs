@@ -40,6 +40,12 @@ impl<T> IndexMut<&Vector> for Matrix<T> {
     }
 }
 
+impl<T: Clone> Matrix<T> {
+    pub fn new(val: T, rows: usize, cols: usize) -> Matrix<T> {
+        Matrix(vec![vec![val; cols]; rows])
+    }
+}
+
 impl fmt::Display for Matrix<bool> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for row in self.0.iter().rev() {
@@ -146,6 +152,9 @@ impl Board {
             && pos.1 >= 0
             && (pos.0 as usize) < self.0 .0[0].len()
             && (pos.1 as usize) < self.0 .0.len()
+    }
+    pub fn shape(&self) -> (usize, usize) {
+        (self.0 .0.len(), self.0 .0[0].len())
     }
     pub fn draw(&self, highlighting: &Matrix<bool>) {
         for (row, hrow) in self.0 .0.iter().rev().zip(highlighting.0.iter().rev()) {
