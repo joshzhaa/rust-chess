@@ -22,7 +22,7 @@ pub struct GameState {
 // stores a move of some 'piece', from position 'start' to position 'end'
 #[derive(Clone, Debug)]
 pub struct Move {
-    piece: Piece,
+    pub piece: Piece,
     pub start: Vector,
     pub end: Vector,
 }

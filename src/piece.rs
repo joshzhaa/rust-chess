@@ -25,7 +25,11 @@ impl Piece {
             has_moved: false,
         }
     }
-
+    /*
+     * Each piece id has an associated closure which marks all valid moves (return_tuple.0)
+     * Each piece except for K declares which squares it threatens (return_tuple.1)
+     * K instead declares which squares it is threatened by (for end-game condition calculation)
+     */
     pub fn validity_func(&self) -> impl FnOnce(&Vector, &Game) -> (Matrix<bool>, Matrix<bool>) {
         match self.id {
             'K' => move |pos: &Vector, game: &Game| -> (Matrix<bool>, Matrix<bool>) {
@@ -117,7 +121,7 @@ impl Piece {
                     let target = pos.clone() + left * 2;
                     this.attack(target, &game.state, &mut valid, Some(&mut threat));
                 }
-                (valid, threat)
+                (valid, threatened)
             },
             'Q' => move |pos: &Vector, game: &Game| -> (Matrix<bool>, Matrix<bool>) {
                 let this = game.get_piece(pos);
@@ -178,12 +182,19 @@ impl Piece {
             'P' => move |pos: &Vector, game: &Game| {
                 let this = game.get_piece(pos);
                 let (mut valid, mut threat) = init_masks(&game.state);
-                let piece = game.get_piece(pos);
-                let unit_vec = game.get_player(piece.owner).direction.clone();
+                let unit_vec = game.get_player(this.owner).direction.clone();
                 // initial double move logic
-                let has_moved = piece.has_moved;
-                let near_is_empty = game.get_piece(&(pos.clone() + unit_vec.clone())).id == ' ';
-                let far_is_empty = game.get_piece(&(pos.clone() + unit_vec.clone() * 2)).id == ' ';
+                let near = pos.clone() + unit_vec.clone();
+                let far = pos.clone() + unit_vec.clone() * 2;
+                let near_is_empty = game.in_bounds(&near) && game.get_piece(&near).id == ' ';
+                let far_is_empty = game.in_bounds(&far) && game.get_piece(&far).id == ' ';
+                if near_is_empty {
+                    this.attack(near, &game.state, &mut valid, None);
+                    if !this.has_moved && far_is_empty {
+                        let far = pos.clone() + unit_vec.clone() * 2;
+                        this.attack(far, &game.state, &mut valid, None);
+                    }
+                }
                 // diagonal capture logic
                 // 90 deg rotation matrix, useful misnomer, only correct if unit_vec is down
                 let right = Vector(-1 * unit_vec.1, unit_vec.0);
@@ -195,7 +206,7 @@ impl Piece {
                         return false;
                     };
                     let diag_piece = game.get_piece(&pos);
-                    diag_piece.id != ' ' && diag_piece.owner != piece.owner
+                    diag_piece.id != ' ' && diag_piece.owner != this.owner
                 };
                 let can_right = can_diagonal(diag_right.clone());
                 let can_left = can_diagonal(diag_left.clone());
@@ -215,7 +226,7 @@ impl Piece {
                     }
                     let recent_move = passant_victim.recent_move.clone().unwrap();
                     passant_piece.id == 'P'
-                        && passant_piece.owner != piece.owner
+                        && passant_piece.owner != this.owner
                         && recent_move.square_dist() == 4
                         && recent_move.end == pos
                 };
@@ -234,14 +245,6 @@ impl Piece {
                 }
                 if can_left || left_passant {
                     this.attack(diag_left, &game.state, &mut valid, Some(&mut threat));
-                }
-                if near_is_empty {
-                    let near = pos.clone() + unit_vec.clone();
-                    this.attack(near, &game.state, &mut valid, None);
-                    if !has_moved && far_is_empty {
-                        let far = pos.clone() + unit_vec.clone() * 2;
-                        this.attack(far, &game.state, &mut valid, None);
-                    }
                 }
                 (valid, threat)
             },
@@ -285,11 +288,19 @@ impl Piece {
                 let player = game.current_player();
                 let recent_move = player.recent_move.clone().unwrap();
                 let end_pos = recent_move.end.clone();
+                let unit_vec = player.direction.clone();
                 // recent_move guaranteed to be Some
                 let is_capture = game.get_piece(&end_pos).id != ' ';
                 if !is_capture && recent_move.is_diag() {
-                    let unit_vec = player.direction.clone();
-                    game.state.board[&(end_pos + unit_vec * -1)] = Self::new();
+                    game.state.board[&(end_pos.clone() + unit_vec.clone() * -1)] = Self::new();
+                }
+                // promotion
+                if !game.in_bounds(&(end_pos + unit_vec)) {
+                    game.state.board[&recent_move.start] = Piece {
+                        id: 'Q', // TODO: ask for user input
+                        owner: recent_move.piece.owner,
+                        has_moved: true,
+                    };
                 }
             },
             _ => |_game: &mut Game| {},
