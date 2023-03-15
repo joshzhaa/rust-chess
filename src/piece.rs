@@ -66,19 +66,16 @@ impl Piece {
                             threatened[&pos] = threatened[&pos] || threat[&pos];
                         }
                     }
-                    println!("{}", threatened);
                 };
                 for row in 0..game.state.board.0 .0.len() as i32 {
                     for col in 0..game.state.board.0 .0[0].len() as i32 {
                         let attacker = game.get_piece(&Vector(col, row));
                         let attacked = game.get_piece(pos);
-                        println!("investigate pos ({col}, {row}) with piece {attacker:?} to {attacked:?}");
                         if attacker.owner != attacked.owner {
                             or_assign(&Vector(col, row));
                         }
                     }
                 }
-                println!("{}", threatened);
                 // mark standard moves
                 for offset in offsets {
                     let target = pos.clone() + offset;

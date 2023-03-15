@@ -1,12 +1,11 @@
 use crate::board::{Board, Matrix, Vector};
 use crate::piece::Piece;
 
-#[derive(Clone)]
 pub struct Game {
     pub state: GameState,
     // specifically modified by rewinds
     history: Vec<GameState>,
-    // temporary state, reset on rewind
+    // temporary state, possibly not persistent
     selection: Option<Vector>, // position of Piece selected to be moved
     valid: Matrix<bool>,       // boolean matrix of legal moves
 }
@@ -19,18 +18,27 @@ pub struct GameState {
     players: Vec<Player>, // off by one, players[0] corresponds to player 1 (piece.owner 1)
 }
 
+#[derive(Clone)]
+pub struct Player {
+    pub direction: Vector,
+    pub recent_move: Option<Move>, // each player tracks most recent move for en passant
+    state: State,
+}
+
+#[derive(Clone)]
+enum State {
+    Check,     // K is threatened
+    Stalemate, // K has no legal moves
+    Checkmate, // K is threatened && K has no legal moves
+    None,      // None of the above apply
+}
+
 // stores a move of some 'piece', from position 'start' to position 'end'
 #[derive(Clone, Debug)]
 pub struct Move {
     pub piece: Piece,
     pub start: Vector,
     pub end: Vector,
-}
-
-#[derive(Clone)]
-pub struct Player {
-    pub direction: Vector,
-    pub recent_move: Option<Move>, // each player tracks most recent move for en passant
 }
 
 impl Move {
@@ -59,10 +67,12 @@ impl Game {
                     Player {
                         direction: Vector(0, 1),
                         recent_move: None,
+                        state: State::None,
                     },
                     Player {
                         direction: Vector(0, -1),
                         recent_move: None,
+                        state: State::None,
                     },
                 ],
             },
@@ -75,7 +85,7 @@ impl Game {
         &self.state.board[pos]
     }
     pub fn get_player(&self, player_id: usize) -> &Player {
-        &self.state.players[player_id as usize - 1]
+        &self.state.players[player_id - 1]
     }
     pub fn in_bounds(&self, pos: &Vector) -> bool {
         self.state.board.in_bounds(pos)
@@ -143,6 +153,43 @@ impl Game {
         // update turn counters
         self.state.turn = self.state.turn % self.state.players.len() + 1;
         self.state.halfmove_counter += 1;
+        // update the end state of each player, enum State
+        for player_id in 1..=self.state.players.len() {
+            self.state.players[player_id - 1].state = self.update_check(player_id);
+        }
+    }
+    /*
+     * Updates the end states of each player, defined in enum State
+     */
+    fn update_check(&self, player_id: usize) -> State {
+        let (rows, cols) = self.state.board.shape();
+        let mut is_threatened = false;
+        let mut has_legal_moves = Vec::new();
+        for row in 0..rows as i32 {
+            for col in 0..cols as i32 {
+                let pos = Vector(col, row);
+                let piece = &self.state.board[&pos];
+                if piece.owner == player_id {
+                    let (valid, threat) = piece.validity_func()(&pos, self);
+                    if piece.id == 'K' {
+                        is_threatened = threat[&pos];
+                    }
+                    let can_move = valid.0.into_iter().flatten().any(|x| x);
+                    println!("{:?} can {:?}", piece, can_move);
+                    has_legal_moves.push(can_move);
+                }
+            }
+        }
+        println!("{:?}", is_threatened);
+        println!("{:?}", has_legal_moves);
+        let no_legal_moves = has_legal_moves.into_iter().all(|x| !x);
+        println!("{:?}", no_legal_moves);
+        match (is_threatened, no_legal_moves) {
+            (true, true) => State::Checkmate,
+            (true, false) => State::Check,
+            (false, true) => State::Stalemate,
+            (false, false) => State::None,
+        }
     }
     pub fn rewind(&mut self, halfmoves: u32) {
         let target_time = self.history.len() - halfmoves as usize;
@@ -167,5 +214,11 @@ impl Game {
         };
         println!("player to move: {}", self.state.turn);
         println!("halfmove counter: {}", self.state.halfmove_counter);
+        match self.current_player().state {
+            State::Checkmate => println!("player {} is in checkmate!", self.state.turn),
+            State::Check => println!("player {} is in check!", self.state.turn),
+            State::Stalemate => println!("player {} is in stalemate!", self.state.turn),
+            State::None => (),
+        };
     }
 }

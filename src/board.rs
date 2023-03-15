@@ -153,6 +153,9 @@ impl Board {
             && (pos.0 as usize) < self.0 .0[0].len()
             && (pos.1 as usize) < self.0 .0.len()
     }
+    /*
+     * (rows, cols)
+     */
     pub fn shape(&self) -> (usize, usize) {
         (self.0 .0.len(), self.0 .0[0].len())
     }
