@@ -46,6 +46,13 @@ impl<T: Clone> Matrix<T> {
     }
 }
 
+impl<T> Matrix<T> {
+    // returns (rows, cols)
+    pub fn shape(&self) -> (usize, usize) {
+        (self.0.len(), self.0[0].len())
+    }
+}
+
 impl fmt::Display for Matrix<bool> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for row in self.0.iter().rev() {
@@ -157,7 +164,7 @@ impl Board {
      * (rows, cols)
      */
     pub fn shape(&self) -> (usize, usize) {
-        (self.0 .0.len(), self.0 .0[0].len())
+        self.0.shape()
     }
     pub fn draw(&self, highlighting: &Matrix<bool>) {
         for (row, hrow) in self.0 .0.iter().rev().zip(highlighting.0.iter().rev()) {

@@ -23,10 +23,11 @@ pub struct Player {
     pub direction: Vector,
     pub recent_move: Option<Move>, // each player tracks most recent move for en passant
     state: State,
+    pub king_pos: Vector,
 }
 
 #[derive(Clone)]
-enum State {
+pub enum State {
     Check,     // K is threatened
     Stalemate, // K has no legal moves
     Checkmate, // K is threatened && K has no legal moves
@@ -68,11 +69,13 @@ impl Game {
                         direction: Vector(0, 1),
                         recent_move: None,
                         state: State::None,
+                        king_pos: Vector(4, 0),
                     },
                     Player {
                         direction: Vector(0, -1),
                         recent_move: None,
                         state: State::None,
+                        king_pos: Vector(4, 7),
                     },
                 ],
             },
@@ -81,21 +84,13 @@ impl Game {
             valid: Matrix(vec![vec![false; 8]; 8]),
         }
     }
-    pub fn get_piece(&self, pos: &Vector) -> &Piece {
-        &self.state.board[pos]
-    }
-    pub fn get_player(&self, player_id: usize) -> &Player {
-        &self.state.players[player_id - 1]
-    }
-    pub fn in_bounds(&self, pos: &Vector) -> bool {
-        self.state.board.in_bounds(pos)
-    }
     pub fn current_player(&self) -> &Player {
-        return &self.state.players[self.state.turn as usize - 1];
+        self.state.get_player(self.state.turn)
     }
     pub fn show_moves(&mut self, pos: Vector) {
         let selected = &self.state.board[&pos];
-        (self.valid, _) = selected.validity_func()(&pos, self); // ask piece to mark the squares it wants
+        let (valid, threat) = selected.claim_squares()(&pos, &self.state); // ask what squares it wants
+        (self.valid, _) = selected.speculate(valid, threat, &pos, &self.state);
     }
     fn deselect(&mut self) {
         self.selection = None;
@@ -141,56 +136,24 @@ impl Game {
             end: to.clone(),
         });
         // perform move side effects (e.g. K castle and P en passant)
-        self.state.board[from].side_effects()(self);
+        self.state.board[from].side_effects()(from, &mut self.state);
         // modify board by swapping pieces around
         self.state.board[to] = self.state.board[from].clone();
-        self.state.board[from] = Piece {
-            id: ' ',
-            owner: 0,
-            has_moved: false,
-        };
+        self.state.board[from] = Piece::new();
         self.state.board[to].has_moved = true;
+        // update king_pos
+        if self.state.board[to].id == 'K' {
+            self.state.players[self.state.turn - 1].king_pos = to.clone();
+        }
         // update turn counters
         self.state.turn = self.state.turn % self.state.players.len() + 1;
         self.state.halfmove_counter += 1;
         // update the end state of each player, enum State
         for player_id in 1..=self.state.players.len() {
-            self.state.players[player_id - 1].state = self.update_check(player_id);
+            self.state.players[player_id - 1].state = self.state.update_check(player_id);
         }
     }
-    /*
-     * Updates the end states of each player, defined in enum State
-     */
-    fn update_check(&self, player_id: usize) -> State {
-        let (rows, cols) = self.state.board.shape();
-        let mut is_threatened = false;
-        let mut has_legal_moves = Vec::new();
-        for row in 0..rows as i32 {
-            for col in 0..cols as i32 {
-                let pos = Vector(col, row);
-                let piece = &self.state.board[&pos];
-                if piece.owner == player_id {
-                    let (valid, threat) = piece.validity_func()(&pos, self);
-                    if piece.id == 'K' {
-                        is_threatened = threat[&pos];
-                    }
-                    let can_move = valid.0.into_iter().flatten().any(|x| x);
-                    println!("{:?} can {:?}", piece, can_move);
-                    has_legal_moves.push(can_move);
-                }
-            }
-        }
-        println!("{:?}", is_threatened);
-        println!("{:?}", has_legal_moves);
-        let no_legal_moves = has_legal_moves.into_iter().all(|x| !x);
-        println!("{:?}", no_legal_moves);
-        match (is_threatened, no_legal_moves) {
-            (true, true) => State::Checkmate,
-            (true, false) => State::Check,
-            (false, true) => State::Stalemate,
-            (false, false) => State::None,
-        }
-    }
+
     pub fn rewind(&mut self, halfmoves: u32) {
         let target_time = self.history.len() - halfmoves as usize;
         self.history.truncate(target_time + 1);
@@ -220,5 +183,50 @@ impl Game {
             State::Stalemate => println!("player {} is in stalemate!", self.state.turn),
             State::None => (),
         };
+    }
+}
+impl GameState {
+    pub fn get_piece(&self, pos: &Vector) -> &Piece {
+        &self.board[pos]
+    }
+    pub fn get_player(&self, player_id: usize) -> &Player {
+        &self.players[player_id - 1]
+    }
+    pub fn in_bounds(&self, pos: &Vector) -> bool {
+        self.board.in_bounds(pos)
+    }
+    /*
+     * Updates the end states of each player, defined in enum State
+     */
+    pub fn update_check(&self, player_id: usize) -> State {
+        let (rows, cols) = self.board.shape();
+        let mut is_threatened = false;
+        let mut has_legal_moves = Vec::new();
+        for row in 0..rows as i32 {
+            for col in 0..cols as i32 {
+                let pos = Vector(col, row);
+                let piece = &self.board[&pos];
+                if piece.owner == player_id {
+                    let (valid, threat) = piece.claim_squares()(&pos, self);
+                    let (valid, threat) = piece.speculate(valid, threat, &pos, self);
+                    if piece.id == 'K' {
+                        is_threatened = threat[&pos];
+                    }
+                    let can_move = valid.0.into_iter().flatten().any(|x| x);
+                    println!("{:?} can {:?}", piece, can_move);
+                    has_legal_moves.push(can_move);
+                }
+            }
+        }
+        println!("{:?}", is_threatened);
+        println!("{:?}", has_legal_moves);
+        let no_legal_moves = has_legal_moves.into_iter().all(|x| !x);
+        println!("{:?}", no_legal_moves);
+        match (is_threatened, no_legal_moves) {
+            (true, true) => State::Checkmate,
+            (true, false) => State::Check,
+            (false, true) => State::Stalemate,
+            (false, false) => State::None,
+        }
     }
 }

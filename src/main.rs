@@ -32,6 +32,8 @@ fn terminal_play() -> io::Result<()> {
             let input = stdin.lock().lines().next().unwrap().unwrap();
             let num = input.into_bytes()[0] - ('1' as u8);
             game.rewind(num.into());
+            println!("AFTER REWIND");
+            game.draw();
         } else {
             let target = parse(input.into_bytes());
             game.select(target);

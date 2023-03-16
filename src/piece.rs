@@ -1,5 +1,5 @@
 use crate::board::{Matrix, Vector};
-use crate::game::{Game, GameState};
+use crate::game::{GameState, State};
 
 // each piece keeps track of what kind it is (K, Q, R, ...) and which player controls it (1, 2, 3, ...)
 #[derive(Clone, PartialEq, Debug)]
@@ -30,11 +30,13 @@ impl Piece {
      * Each piece except for K declares which squares it threatens (return_tuple.1)
      * K instead declares which squares it is threatened by (for end-game condition calculation)
      */
-    pub fn validity_func(&self) -> impl FnOnce(&Vector, &Game) -> (Matrix<bool>, Matrix<bool>) {
+    pub fn claim_squares(
+        &self,
+    ) -> impl FnOnce(&Vector, &GameState) -> (Matrix<bool>, Matrix<bool>) {
         match self.id {
-            'K' => move |pos: &Vector, game: &Game| -> (Matrix<bool>, Matrix<bool>) {
+            'K' => |pos: &Vector, game: &GameState| -> (Matrix<bool>, Matrix<bool>) {
                 let this = game.get_piece(pos);
-                let (mut valid, mut threat) = init_masks(&game.state);
+                let (mut valid, mut threat) = init_masks(&game);
                 let offsets = vec![
                     Vector(-1, -1),
                     Vector(-1, 0),
@@ -52,14 +54,14 @@ impl Piece {
                     if game.get_piece(pos).id == 'K' {
                         for offset in &offsets {
                             let target = pos.clone() + offset.clone();
-                            if game.state.board.in_bounds(&target) {
+                            if game.board.in_bounds(&target) {
                                 threatened[&target] = true;
                             }
                         }
                         return;
                     }
                     // handle non-king pieces
-                    let (_, threat) = game.state.board[pos].validity_func()(pos, game);
+                    let (_, threat) = game.board[pos].claim_squares()(pos, game);
                     for row in 0..threat.0.len() as i32 {
                         for col in 0..threat.0[0].len() as i32 {
                             let pos = Vector(col, row);
@@ -67,8 +69,8 @@ impl Piece {
                         }
                     }
                 };
-                for row in 0..game.state.board.0 .0.len() as i32 {
-                    for col in 0..game.state.board.0 .0[0].len() as i32 {
+                for row in 0..game.board.0 .0.len() as i32 {
+                    for col in 0..game.board.0 .0[0].len() as i32 {
                         let attacker = game.get_piece(&Vector(col, row));
                         let attacked = game.get_piece(pos);
                         if attacker.owner != attacked.owner {
@@ -79,8 +81,8 @@ impl Piece {
                 // mark standard moves
                 for offset in offsets {
                     let target = pos.clone() + offset;
-                    if game.state.board.in_bounds(&target) && !threatened[&target] {
-                        this.attack(target, &game.state, &mut valid, Some(&mut threat));
+                    if game.board.in_bounds(&target) && !threatened[&target] {
+                        this.attack(target, &game, &mut valid, Some(&mut threat));
                     }
                 }
                 // mark castles
@@ -112,17 +114,17 @@ impl Piece {
                 let left = right.clone() * -1;
                 if can_castle(&right) {
                     let target = pos.clone() + right * 2;
-                    this.attack(target, &game.state, &mut valid, Some(&mut threat));
+                    this.attack(target, &game, &mut valid, Some(&mut threat));
                 }
                 if can_castle(&left) {
                     let target = pos.clone() + left * 2;
-                    this.attack(target, &game.state, &mut valid, Some(&mut threat));
+                    this.attack(target, &game, &mut valid, Some(&mut threat));
                 }
                 (valid, threatened)
             },
-            'Q' => move |pos: &Vector, game: &Game| -> (Matrix<bool>, Matrix<bool>) {
+            'Q' => |pos: &Vector, game: &GameState| {
                 let this = game.get_piece(pos);
-                let (mut valid, mut threat) = init_masks(&game.state);
+                let (mut valid, mut threat) = init_masks(&game);
                 let directions = vec![
                     Vector(-1, -1),
                     Vector(-1, 0),
@@ -133,31 +135,31 @@ impl Piece {
                     Vector(1, 0),
                     Vector(1, 1),
                 ];
-                this.extend(pos, directions, &game.state, &mut valid, &mut threat);
+                this.extend(pos, directions, &game, &mut valid, &mut threat);
                 (valid, threat)
             },
-            'R' => move |pos: &Vector, game: &Game| {
+            'R' => |pos: &Vector, game: &GameState| {
                 let this = game.get_piece(pos);
-                let (mut valid, mut threat) = init_masks(&game.state);
+                let (mut valid, mut threat) = init_masks(&game);
                 let directions = vec![Vector(0, 1), Vector(1, 0), Vector(0, -1), Vector(-1, 0)];
-                this.extend(pos, directions, &game.state, &mut valid, &mut threat);
+                this.extend(pos, directions, &game, &mut valid, &mut threat);
                 (valid, threat)
             },
-            'B' => move |pos: &Vector, game: &Game| {
+            'B' => |pos: &Vector, game: &GameState| {
                 let this = game.get_piece(pos);
-                let (mut valid, mut threat) = init_masks(&game.state);
+                let (mut valid, mut threat) = init_masks(&game);
                 let directions = vec![
                     Vector(1, 1),   // NE
                     Vector(1, -1),  // SE
                     Vector(-1, -1), // SW
                     Vector(-1, 1),  // NW
                 ];
-                this.extend(pos, directions, &game.state, &mut valid, &mut threat);
+                this.extend(pos, directions, &game, &mut valid, &mut threat);
                 (valid, threat)
             },
-            'N' => |pos: &Vector, game: &Game| {
+            'N' => |pos: &Vector, game: &GameState| {
                 let this = game.get_piece(pos);
-                let (mut valid, mut threat) = init_masks(&game.state);
+                let (mut valid, mut threat) = init_masks(&game);
                 //counterclockwise from positive x-axis
                 let offsets = [
                     Vector(2, 1),
@@ -171,14 +173,14 @@ impl Piece {
                 ];
                 for offset in offsets {
                     let target = pos.clone() + offset;
-                    this.attack(target, &game.state, &mut valid, Some(&mut threat));
+                    this.attack(target, &game, &mut valid, Some(&mut threat));
                 }
                 (valid, threat)
             },
             // pawn logic is fundamentally horrific
-            'P' => move |pos: &Vector, game: &Game| {
+            'P' => |pos: &Vector, game: &GameState| {
                 let this = game.get_piece(pos);
-                let (mut valid, mut threat) = init_masks(&game.state);
+                let (mut valid, mut threat) = init_masks(&game);
                 let unit_vec = game.get_player(this.owner).direction.clone();
                 // initial double move logic
                 let near = pos.clone() + unit_vec.clone();
@@ -186,10 +188,10 @@ impl Piece {
                 let near_is_empty = game.in_bounds(&near) && game.get_piece(&near).id == ' ';
                 let far_is_empty = game.in_bounds(&far) && game.get_piece(&far).id == ' ';
                 if near_is_empty {
-                    this.attack(near, &game.state, &mut valid, None);
+                    this.attack(near, &game, &mut valid, None);
                     if !this.has_moved && far_is_empty {
                         let far = pos.clone() + unit_vec.clone() * 2;
-                        this.attack(far, &game.state, &mut valid, None);
+                        this.attack(far, &game, &mut valid, None);
                     }
                 }
                 // diagonal capture logic
@@ -199,7 +201,7 @@ impl Piece {
                 let diag_right = pos.clone() + unit_vec.clone() + right.clone();
                 let diag_left = pos.clone() + unit_vec.clone() + left.clone();
                 let can_diagonal = |pos: Vector| {
-                    if !game.state.board.in_bounds(&pos) {
+                    if !game.board.in_bounds(&pos) {
                         return false;
                     };
                     let diag_piece = game.get_piece(&pos);
@@ -209,7 +211,7 @@ impl Piece {
                 let can_left = can_diagonal(diag_left.clone());
                 // en passant logic
                 let can_passant = |pos: Vector| {
-                    if !game.state.board.in_bounds(&pos) {
+                    if !game.board.in_bounds(&pos) {
                         return false;
                     }
                     let passant_piece = game.get_piece(&pos);
@@ -230,34 +232,34 @@ impl Piece {
                 let right_passant = can_passant(pos.clone() + right.clone());
                 let left_passant = can_passant(pos.clone() + left.clone());
                 // need to always threaten diag squares to communicate that enemy K cannot move there
-                if game.state.board.in_bounds(&diag_right) {
+                if game.board.in_bounds(&diag_right) {
                     threat[&diag_right] = true;
                 }
-                if game.state.board.in_bounds(&diag_left) {
+                if game.board.in_bounds(&diag_left) {
                     threat[&diag_left] = true;
                 }
                 // carry out attacks, needs local variables logic *then* attack due to mut borrow rules
                 if can_right || right_passant {
-                    this.attack(diag_right, &game.state, &mut valid, Some(&mut threat));
+                    this.attack(diag_right, &game, &mut valid, Some(&mut threat));
                 }
                 if can_left || left_passant {
-                    this.attack(diag_left, &game.state, &mut valid, Some(&mut threat));
+                    this.attack(diag_left, &game, &mut valid, Some(&mut threat));
                 }
                 (valid, threat)
             },
-            _ => move |_pos: &Vector, game: &Game| {
-                let (valid, threat) = init_masks(&game.state);
+            _ => |_pos: &Vector, game: &GameState| {
+                let (valid, threat) = init_masks(&game);
                 (valid, threat)
             },
         }
     }
     // functions must be called as move is being made,
     // before pieces are swapped, after player's recent_move field has been updated
-    pub fn side_effects(&self) -> impl FnMut(&mut Game) {
+    pub fn side_effects(&self) -> impl FnMut(&Vector, &mut GameState) {
         match self.id {
             // swap R position
-            'K' => |game: &mut Game| {
-                let player = game.current_player();
+            'K' => |pos: &Vector, game: &mut GameState| {
+                let player = game.get_player(game.get_piece(pos).owner);
                 let recent_move = player.recent_move.clone().unwrap();
                 let start = recent_move.start.clone();
                 let end = recent_move.end.clone();
@@ -276,31 +278,31 @@ impl Piece {
                 };
                 if is_castle {
                     let rook_pos = find_rook();
-                    game.state.board[&(start + direction)] = game.state.board[&rook_pos].clone();
-                    game.state.board[&rook_pos] = Piece::new();
+                    game.board[&(start + direction)] = game.board[&rook_pos].clone();
+                    game.board[&rook_pos] = Piece::new();
                 }
             },
             // destroy en passant'ed pawn
-            'P' => |game: &mut Game| {
-                let player = game.current_player();
+            'P' => |pos: &Vector, game: &mut GameState| {
+                let player = game.get_player(game.get_piece(pos).owner);
                 let recent_move = player.recent_move.clone().unwrap();
                 let end_pos = recent_move.end.clone();
                 let unit_vec = player.direction.clone();
                 // recent_move guaranteed to be Some
                 let is_capture = game.get_piece(&end_pos).id != ' ';
                 if !is_capture && recent_move.is_diag() {
-                    game.state.board[&(end_pos.clone() + unit_vec.clone() * -1)] = Self::new();
+                    game.board[&(end_pos.clone() + unit_vec.clone() * -1)] = Self::new();
                 }
                 // promotion
                 if !game.in_bounds(&(end_pos + unit_vec)) {
-                    game.state.board[&recent_move.start] = Piece {
+                    game.board[&recent_move.start] = Piece {
                         id: 'Q', // TODO: ask for user input
                         owner: recent_move.piece.owner,
                         has_moved: true,
                     };
                 }
             },
-            _ => |_game: &mut Game| {},
+            _ => |_pos: &Vector, _game: &mut GameState| {},
         }
     }
     // called from each piece to attack a position, determines whether it is possible
@@ -360,5 +362,37 @@ impl Piece {
                 }
             }
         }
+    }
+    /*
+     * speculates what would happen if self made each move in valid
+     * unmarks as valid and threat if such a move would threaten friendly K
+     */
+    pub fn speculate(
+        &self,
+        mut valid: Matrix<bool>,
+        mut threat: Matrix<bool>,
+        start: &Vector,
+        game: &GameState,
+    ) -> (Matrix<bool>, Matrix<bool>) {
+        let (rows, cols) = valid.shape();
+        for row in 0..rows as i32 {
+            for col in 0..cols as i32 {
+                let end = Vector(col, row);
+                if valid[&end] {
+                    let mut speculation = game.clone();
+                    // speculation.board[start].side_effects()(start, &mut speculation);
+                    speculation.board[&end] = speculation.board[start].clone();
+                    speculation.board[start] = Self::new();
+                    let king_pos = &speculation.get_player(self.owner).king_pos;
+                    let (_, threatened) =
+                        speculation.board[&king_pos].claim_squares()(king_pos, &speculation);
+                    if threatened[king_pos] {
+                        valid[&end] = false;
+                        threat[&end] = false;
+                    }
+                }
+            }
+        }
+        (valid, threat)
     }
 }
